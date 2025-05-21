@@ -1,7 +1,12 @@
-use std::collections::VecDeque;
-use std::io::{self, Read, Write};
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+use minifb::{Key, Window, WindowOptions};
+use rand::Rng;
+use std::{collections::VecDeque, time::{Duration, Instant}};
+
+const CELL_SIZE: usize = 20;
+const WIDTH: usize = 20;
+const HEIGHT: usize = 20;
+const WINDOW_WIDTH: usize = WIDTH * CELL_SIZE;
+const WINDOW_HEIGHT: usize = HEIGHT * CELL_SIZE;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Direction {
@@ -12,152 +17,114 @@ enum Direction {
 }
 
 struct Game {
-    width: usize,
-    height: usize,
     snake: VecDeque<(usize, usize)>,
     direction: Direction,
     food: (usize, usize),
-    speed: Duration,
 }
 
 impl Game {
-    fn new(width: usize, height: usize, speed_ms: u64) -> Self {
+    fn new() -> Self {
         let mut snake = VecDeque::new();
-        let start_x = width / 2;
-        let start_y = height / 2;
-        snake.push_back((start_x, start_y));
-
-        let food = Game::spawn_food(&snake, width, height);
-
+        snake.push_back((WIDTH / 2, HEIGHT / 2));
+        let food = Game::spawn_food(&snake);
         Self {
-            width,
-            height,
             snake,
             direction: Direction::Right,
             food,
-            speed: Duration::from_millis(speed_ms),
         }
     }
 
-    fn spawn_food(snake: &VecDeque<(usize, usize)>, width: usize, height: usize) -> (usize, usize) {
-        use rand::Rng;
+    fn spawn_food(snake: &VecDeque<(usize, usize)>) -> (usize, usize) {
         let mut rng = rand::thread_rng();
         loop {
-            let x = rng.gen_range(0..width);
-            let y = rng.gen_range(0..height);
+            let x = rng.gen_range(0..WIDTH);
+            let y = rng.gen_range(0..HEIGHT);
             if !snake.contains(&(x, y)) {
                 return (x, y);
             }
         }
     }
 
-    fn update_snake(&mut self) -> bool {
+    fn update(&mut self) -> bool {
         let (head_x, head_y) = self.snake.front().unwrap();
-        let (new_x, new_y) = match self.direction {
+        let new_head = match self.direction {
             Direction::Up => (*head_x, head_y.saturating_sub(1)),
-            Direction::Down => (*head_x, *head_y + 1),
+            Direction::Down => (*head_x, head_y + 1),
             Direction::Left => (head_x.saturating_sub(1), *head_y),
             Direction::Right => (head_x + 1, *head_y),
         };
 
-        // Проверяем столкновение с границами
-        if new_x >= self.width || new_y >= self.height || self.snake.contains(&(new_x, new_y)) {
+        if new_head.0 >= WIDTH || new_head.1 >= HEIGHT || self.snake.contains(&new_head) {
             return false;
         }
 
-        self.snake.push_front((new_x, new_y));
-
-        if (new_x, new_y) == self.food {
-            self.food = Game::spawn_food(&self.snake, self.width, self.height);
+        self.snake.push_front(new_head);
+        if new_head == self.food {
+            self.food = Game::spawn_food(&self.snake);
         } else {
             self.snake.pop_back();
         }
+
         true
     }
 
-    fn draw(&self) {
-        print!("\x1B[2J\x1B[1;1H");
-
-        // Верхняя граница
-        println!("{}", "#".repeat(self.width * 2 + 2));
-
-        for y in 0..self.height {
-            print!("#"); // Левая граница
-
-            for x in 0..self.width {
-                if self.snake.front() == Some(&(x, y)) {
-                    print!("*");
-                } else if self.snake.contains(&(x, y)) {
-                    print!("&");
-                } else if self.food == (x, y) {
-                    print!("@");
-                } else {
-                    print!("  "); // 2 пробела для выравнивания
-                }
-            }
-
-            print!("#"); // Правая граница
-            println!();
-        }
-
-        // Нижняя граница
-        println!("{}", "#".repeat(self.width * 2 + 1));
-    }
-
-    fn set_direction(&mut self, dir: Direction) {
+    fn set_direction(&mut self, new_dir: Direction) {
         use Direction::*;
-
-        if (self.direction == Up && dir != Down)
-            || (self.direction == Down && dir != Up)
-            || (self.direction == Left && dir != Right)
-            || (self.direction == Right && dir != Left)
+        if (self.direction == Up && new_dir != Down)
+            || (self.direction == Down && new_dir != Up)
+            || (self.direction == Left && new_dir != Right)
+            || (self.direction == Right && new_dir != Left)
         {
-            self.direction = dir;
+            self.direction = new_dir;
         }
     }
 }
 
-fn get_user_input(prompt: &str) -> usize {
-    print!("{}", prompt);
-    io::stdout().flush().unwrap();
-    let mut line = String::new();
-    io::stdin().read_line(&mut line).unwrap();
-    line.trim().parse().unwrap_or(10)
+fn draw_game(buffer: &mut Vec<u32>, game: &Game) {
+    buffer.fill(0); // Чистим экран (черный)
+
+    // Змейка — зелёная
+    for &(x, y) in &game.snake {
+        draw_cell(buffer, x, y, 0x00FF00);
+    }
+
+    // Еда — красная
+    draw_cell(buffer, game.food.0, game.food.1, 0xFF0000);
+}
+
+fn draw_cell(buffer: &mut Vec<u32>, x: usize, y: usize, color: u32) {
+    for dy in 0..CELL_SIZE {
+        for dx in 0..CELL_SIZE {
+            let px = x * CELL_SIZE + dx;
+            let py = y * CELL_SIZE + dy;
+            if px < WINDOW_WIDTH && py < WINDOW_HEIGHT {
+                buffer[py * WINDOW_WIDTH + px] = color;
+            }
+        }
+    }
 }
 
 fn main() {
-    let width = get_user_input("What is width : ");
-    let height = get_user_input("What is height : ");
-    let speed = get_user_input("What is speed : ");
+    let mut window = Window::new("🟢 Snake", WINDOW_WIDTH, WINDOW_HEIGHT, WindowOptions::default()).unwrap();
+    let mut buffer = vec![0; WINDOW_WIDTH * WINDOW_HEIGHT];
+    let mut game = Game::new();
+    let mut last_update = Instant::now();
 
-    let mut game = Game::new(width, height, speed as u64);
-
-    let mut stdin = io::stdin();
-    let mut input = [0; 1];
-
-    loop {
-        let start = Instant::now();
-
-        if stdin.read(&mut input).is_ok() {
-            match input[0] as char {
-                'w' => game.set_direction(Direction::Up),
-                's' => game.set_direction(Direction::Down),
-                'a' => game.set_direction(Direction::Left),
-                'd' => game.set_direction(Direction::Right),
-                _ => {}
+    while window.is_open() && !window.is_key_down(Key::Escape) {
+        if last_update.elapsed() >= Duration::from_millis(100) {
+            if !game.update() {
+                println!("Game Over! 🪦 Length: {}", game.snake.len());
+                break;
             }
+            draw_game(&mut buffer, &game);
+            window.update_with_buffer(&buffer, WINDOW_WIDTH, WINDOW_HEIGHT).unwrap();
+            last_update = Instant::now();
         }
 
-        if !game.update_snake() {
-            println!("💀 Game Over! Длина змеи: {}", game.snake.len());
-            break;
-        }
-
-        game.draw();
-
-        let elapsed = start.elapsed();
-        if game.speed > elapsed {
-            sleep(game.speed - elapsed);
-        }
+        // Управление
+        if window.is_key_down(Key::W) { game.set_direction(Direction::Up); }
+        if window.is_key_down(Key::S) { game.set_direction(Direction::Down); }
+        if window.is_key_down(Key::A) { game.set_direction(Direction::Left); }
+        if window.is_key_down(Key::D) { game.set_direction(Direction::Right); }
     }
 }
