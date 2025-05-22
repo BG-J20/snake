@@ -1,32 +1,40 @@
-use minifb::{Key, Window, WindowOptions};
+mod agent;
+mod env;
+
+use agent::RandomAgent;
+use env::Env;
 use rand::Rng;
-use std::{collections::VecDeque, time::{Duration, Instant}};
+
+use minifb::{Key, Window, WindowOptions};
+use std::{time::{Duration, Instant}};
 
 const CELL_SIZE: usize = 20;
-const WIDTH: usize = 20;
-const HEIGHT: usize = 20;
+pub const WIDTH: usize = 20;
+pub const HEIGHT: usize = 20;
 const WINDOW_WIDTH: usize = WIDTH * CELL_SIZE;
 const WINDOW_HEIGHT: usize = HEIGHT * CELL_SIZE;
 
 #[derive(Clone, Copy, PartialEq)]
-enum Direction {
+pub enum Direction {
     Up,
     Down,
     Left,
     Right,
 }
 
-struct Game {
-    snake: VecDeque<(usize, usize)>,
-    direction: Direction,
-    food: (usize, usize),
+use std::collections::VecDeque;
+
+pub struct Game {
+    pub snake: VecDeque<(usize, usize)>,
+    pub direction: Direction,
+    pub food: (usize, usize),
 }
 
 impl Game {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let mut snake = VecDeque::new();
         snake.push_back((WIDTH / 2, HEIGHT / 2));
-        let food = Game::spawn_food(&snake);
+        let food = Self::spawn_food(&snake);
         Self {
             snake,
             direction: Direction::Right,
@@ -45,7 +53,7 @@ impl Game {
         }
     }
 
-    fn update(&mut self) -> bool {
+    pub fn update(&mut self) -> bool {
         let (head_x, head_y) = self.snake.front().unwrap();
         let new_head = match self.direction {
             Direction::Up => (*head_x, head_y.saturating_sub(1)),
@@ -60,7 +68,7 @@ impl Game {
 
         self.snake.push_front(new_head);
         if new_head == self.food {
-            self.food = Game::spawn_food(&self.snake);
+            self.food = Self::spawn_food(&self.snake);
         } else {
             self.snake.pop_back();
         }
@@ -68,7 +76,7 @@ impl Game {
         true
     }
 
-    fn set_direction(&mut self, new_dir: Direction) {
+    pub fn set_direction(&mut self, new_dir: Direction) {
         use Direction::*;
         if (self.direction == Up && new_dir != Down)
             || (self.direction == Down && new_dir != Up)
@@ -78,17 +86,22 @@ impl Game {
             self.direction = new_dir;
         }
     }
+
+    pub fn direction_to_vec(&self) -> (f32, f32) {
+        match self.direction {
+            Direction::Up => (0.0, -1.0),
+            Direction::Down => (0.0, 1.0),
+            Direction::Left => (-1.0, 0.0),
+            Direction::Right => (1.0, 0.0),
+        }
+    }
 }
 
 fn draw_game(buffer: &mut Vec<u32>, game: &Game) {
-    buffer.fill(0); // Чистим экран (черный)
-
-    // Змейка — зелёная
+    buffer.fill(0);
     for &(x, y) in &game.snake {
         draw_cell(buffer, x, y, 0x00FF00);
     }
-
-    // Еда — красная
     draw_cell(buffer, game.food.0, game.food.1, 0xFF0000);
 }
 
@@ -105,26 +118,26 @@ fn draw_cell(buffer: &mut Vec<u32>, x: usize, y: usize, color: u32) {
 }
 
 fn main() {
-    let mut window = Window::new("🟢 Snake", WINDOW_WIDTH, WINDOW_HEIGHT, WindowOptions::default()).unwrap();
+    let mut window = Window::new("🤖 Snake AI", WINDOW_WIDTH, WINDOW_HEIGHT, WindowOptions::default()).unwrap();
     let mut buffer = vec![0; WINDOW_WIDTH * WINDOW_HEIGHT];
-    let mut game = Game::new();
+    let mut env = Env::new();
+    let mut agent = RandomAgent::new();
     let mut last_update = Instant::now();
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         if last_update.elapsed() >= Duration::from_millis(100) {
-            if !game.update() {
-                println!("Game Over! 🪦 Length: {}", game.snake.len());
-                break;
-            }
-            draw_game(&mut buffer, &game);
+            let action = agent.act();
+            let (_, _, done) = env.step(action);
+
+            draw_game(&mut buffer, &env.game);
             window.update_with_buffer(&buffer, WINDOW_WIDTH, WINDOW_HEIGHT).unwrap();
+
+            if done {
+                println!("🤖 Game Over! Длина: {}", env.game.snake.len());
+                env.reset();
+            }
+
             last_update = Instant::now();
         }
-
-        // Управление
-        if window.is_key_down(Key::W) { game.set_direction(Direction::Up); }
-        if window.is_key_down(Key::S) { game.set_direction(Direction::Down); }
-        if window.is_key_down(Key::A) { game.set_direction(Direction::Left); }
-        if window.is_key_down(Key::D) { game.set_direction(Direction::Right); }
     }
 }
