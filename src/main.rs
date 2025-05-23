@@ -1,5 +1,6 @@
 mod agent;
 mod env;
+mod dqn;
 
 use agent::RandomAgent;
 use env::Env;
@@ -121,23 +122,43 @@ fn main() {
     let mut window = Window::new("🤖 Snake AI", WINDOW_WIDTH, WINDOW_HEIGHT, WindowOptions::default()).unwrap();
     let mut buffer = vec![0; WINDOW_WIDTH * WINDOW_HEIGHT];
     let mut env = Env::new();
-    let mut agent = RandomAgent::new();
+    let mut agent = crate::dqn::DQN::load("agent.json").unwrap_or_else(|| crate::dqn::DQN::new(6, 4));
+    let mut rng = rand::thread_rng();
+
+    let mut state = env.get_state();
     let mut last_update = Instant::now();
+    let mut steps = 0;
+    let mut episode_reward = 0.0;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         if last_update.elapsed() >= Duration::from_millis(100) {
-            let action = agent.act();
-            let (_, _, done) = env.step(action);
+            let action = agent.act(&state);
+            let (next_state, reward, done) = env.step(action);
+            agent.learn(&state, action, reward, &next_state);
+            state = if done {
+                println!("🏁 Эпизод завершён. Награда: {}", episode_reward);
+                episode_reward = 0.0;
+                env.reset();
+                env.get_state()
+            } else {
+                episode_reward += reward;
+                next_state
+            };
 
+            // Отрисовка
             draw_game(&mut buffer, &env.game);
             window.update_with_buffer(&buffer, WINDOW_WIDTH, WINDOW_HEIGHT).unwrap();
-
-            if done {
-                println!("🤖 Game Over! Длина: {}", env.game.snake.len());
-                env.reset();
-            }
-
             last_update = Instant::now();
+
+            steps += 1;
+            if steps % 1000 == 0 {
+                agent.save("agent.json");
+                println!("💾 Сохранил веса в файл");
+            }
         }
     }
+
+    agent.save("agent.json");
+    println!("💾 Финальное сохранение весов");
 }
+
